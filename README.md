@@ -1,5 +1,7 @@
 # Saklaw Hazard Alert Pipeline
 
+**Version:** 1.1.0
+
 Backend data pipeline (Firebase Cloud Functions, TypeScript) that feeds the **Saklaw** mobile app with official Philippine hazard information.
 
 ## What this is
@@ -58,9 +60,13 @@ Defined in `src/index.ts`, deployed to region `asia-southeast1`:
 
 | Export | Trigger | Purpose |
 |---|---|---|
-| `syncOfficialPHFeeds` | Schedule — every 1 minute (Asia/Manila) | Runs the PHIVOLCS quake, PAGASA cyclone, and PAGASA flood pipelines concurrently via `Promise.allSettled` |
+| `syncPhivolcsQuakes` | Schedule — every 2 minutes (Asia/Manila) | Runs the PHIVOLCS quake pipeline |
+| `syncPagasaCyclone` | Schedule — every 20 minutes (Asia/Manila) | Runs the PAGASA cyclone pipeline |
+| `syncPagasaFlood` | Schedule — every 20 minutes (Asia/Manila) | Runs the PAGASA flood pipeline |
 | `syncNoahGisDataset` | Schedule — daily at 02:00 (Asia/Manila) | Polls the Project NOAH Hugging Face dataset API for a new commit revision |
 | `noahHuggingFaceWebhook` | HTTPS POST | Hugging Face webhook (secret-authenticated) that reacts immediately when the NOAH dataset repo gets a new commit, instead of waiting for the daily poll |
+
+Each source has its own schedule, tuned to how often it actually changes — not one flat interval for all three. PHIVOLCS quake bulletins are time-critical so they're polled tightly; PAGASA cyclone/flood bulletins are issued on the order of hours, so polling them every minute would only hammer a government site with no public API for zero freshness gain (and risk the scraper's IP getting rate-limited or blocked). Failures in one source don't affect the others since each runs as an independent scheduled function.
 
 ## Processing flow (per hazard)
 

@@ -24,7 +24,9 @@ import { PagasaFloodSource, PagasaWeatherSource } from "./infrastructure/scrapin
 import { PhivolcsQuakeSource } from "./infrastructure/scraping/phivolcs.client";
 import { registerNoahDailySync } from "./presentation/functions/noah-daily-sync.function";
 import { registerNoahWebhook } from "./presentation/functions/noah-webhook.function";
-import { registerScheduledOfficialSync } from "./presentation/functions/scheduled-official-sync.function";
+import { registerScheduledCycloneSync } from "./presentation/functions/scheduled-cyclone-sync.function";
+import { registerScheduledFloodSync } from "./presentation/functions/scheduled-flood-sync.function";
+import { registerScheduledQuakeSync } from "./presentation/functions/scheduled-quake-sync.function";
 
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 1 });
 
@@ -79,9 +81,17 @@ const syncNoahDatasetUseCase = new SyncNoahDatasetUseCase(
 
 // --- Firebase Functions entrypoints ---
 
-export const syncOfficialPHFeeds = registerScheduledOfficialSync({
+export const syncPhivolcsQuakes = registerScheduledQuakeSync({
   quakeUseCase,
+  logger: schedulerLogger,
+});
+
+export const syncPagasaCyclone = registerScheduledCycloneSync({
   cycloneUseCase,
+  logger: schedulerLogger,
+});
+
+export const syncPagasaFlood = registerScheduledFloodSync({
   floodUseCase,
   logger: schedulerLogger,
 });

@@ -1,6 +1,7 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { HazardEvent } from "../../domain/entities/hazard-event";
 import { HazardEventRepository } from "../../domain/ports/hazard-event.repository";
+import { isAlreadyExistsError } from "./firestore-errors";
 
 export class FirestoreHazardEventRepository implements HazardEventRepository {
   constructor(
@@ -8,12 +9,16 @@ export class FirestoreHazardEventRepository implements HazardEventRepository {
     private readonly collection: string,
   ) {}
 
-  async exists(id: string): Promise<boolean> {
-    const snapshot = await this.db.collection(this.collection).doc(id).get();
-    return snapshot.exists;
-  }
-
-  async save(event: HazardEvent): Promise<void> {
-    await this.db.collection(this.collection).doc(event.id).set(event);
+  async saveIfAbsent(event: HazardEvent): Promise<boolean> {
+    try {
+      // `create` fails if the document exists, which makes this a single
+      // atomic write — and costs one less Firestore read per observation
+      // than reading the document back before every save.
+      await this.db.collection(this.collection).doc(event.id).create(event);
+      return true;
+    } catch (err) {
+      if (isAlreadyExistsError(err)) return false;
+      throw err;
+    }
   }
 }

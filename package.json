@@ -6,8 +6,9 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint .",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "node scripts/run-tests.mjs"
   },
   "engines": {
     "node": ">=20"

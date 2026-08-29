@@ -12,21 +12,21 @@ export class RecordGisDatasetRevisionUseCase {
     private readonly logger: Logger,
     private readonly pmtilesUrl: string,
     private readonly layers: readonly string[],
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   async execute(commitSha: string, lastModified: string): Promise<RevisionOutcome> {
-    const currentSha = await this.manifests.getCurrentCommitSha();
-    if (currentSha === commitSha) return "skipped";
-
-    this.logger.info("New revision detected", { commitSha });
-
-    await this.manifests.save({
+    const advanced = await this.manifests.saveIfCommitChanged({
       commitSha,
       lastModified,
-      updatedAt: new Date().toISOString(),
+      updatedAt: this.now().toISOString(),
       pmtilesUrl: this.pmtilesUrl,
       layers: this.layers,
     });
+
+    if (!advanced) return "skipped";
+
+    this.logger.info("New revision detected", { commitSha });
 
     await this.notifier.send(
       {

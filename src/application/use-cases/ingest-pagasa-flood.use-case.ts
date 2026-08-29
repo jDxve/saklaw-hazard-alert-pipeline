@@ -4,6 +4,7 @@ import { FloodSource } from "../../domain/ports/flood-source";
 import { HazardEventRepository } from "../../domain/ports/hazard-event.repository";
 import { Logger } from "../../domain/ports/logger";
 import { Notifier } from "../../domain/ports/notifier";
+import { floodEventId } from "../../domain/rules/event-id.rules";
 import { floodSeverity } from "../../domain/rules/severity.rules";
 
 export class IngestPagasaFloodUseCase {
@@ -20,40 +21,56 @@ export class IngestPagasaFloodUseCase {
     if (!bulletin) return;
 
     const issuedAt = this.now().toISOString();
-    const eventId = `pagasa_flood_${issuedAt.slice(0, 13)}`;
-
-    if (await this.hazardEvents.exists(eventId)) {
-      this.logger.info("Flood advisory already recorded for this hour.", { eventId });
-      return;
-    }
-
     const severity = floodSeverity(bulletin);
+    const basinNames = bulletin.basinsOnWatch.map((basin) => basin.name);
+    const eventId = floodEventId(issuedAt, severity, basinNames);
+
     const event: HazardEvent = {
       id: eventId,
       type: "flood",
       severity,
       sourceType: "official",
-      title:
-        severity === "critical"
-          ? "PAGASA: Critical River Flood Warning"
-          : "PAGASA: Flood Advisory Active",
+      title: `PAGASA: Flood Watch — ${formatBasinList(basinNames)}`,
       plainSummary:
-        "Elevated river stage and water levels detected in monitored river basin channels.",
+        `${basinNames.length} of ${bulletin.basinsMonitored} monitored river basins are under flood watch.`,
       issuedAt,
       source: "DOST-PAGASA River Basin Center",
-      raw: { checkedAt: issuedAt },
+      raw: {
+        checkedAt: issuedAt,
+        basinsOnWatch: basinNames,
+        basinsMonitored: bulletin.basinsMonitored,
+      },
     };
 
-    await this.hazardEvents.save(event);
-    this.logger.info("Flood bulletin saved", { eventId, severity });
+    const created = await this.hazardEvents.saveIfAbsent(event);
+    if (!created) {
+      this.logger.info("Flood advisory already recorded at this severity.", { eventId });
+      return;
+    }
+
+    this.logger.info("Flood bulletin saved", { eventId, severity, basinsOnWatch: basinNames });
 
     await this.notifier.send(
       {
         topic: FCM_TOPIC_FLOOD,
         notification: { title: event.title, body: event.plainSummary },
-        data: { hazardId: event.id, type: event.type, severity },
+        data: {
+          hazardId: event.id,
+          type: event.type,
+          severity,
+          basinsOnWatch: basinNames.join(","),
+        },
       },
       `flood advisory (${severity})`,
     );
   }
+}
+
+/** "Pampanga, Agno and 3 more" — keeps a push notification title readable. */
+const MAX_BASINS_IN_TITLE = 2;
+
+function formatBasinList(names: readonly string[]): string {
+  if (names.length <= MAX_BASINS_IN_TITLE) return names.join(" and ");
+  const shown = names.slice(0, MAX_BASINS_IN_TITLE).join(", ");
+  return `${shown} and ${names.length - MAX_BASINS_IN_TITLE} more`;
 }

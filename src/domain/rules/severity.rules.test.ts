@@ -14,8 +14,16 @@ test("cycloneSeverity classifies by TCWS signal threshold", () => {
   assert.equal(cycloneSeverity(1), "advisory");
 });
 
-test("floodSeverity prioritizes red alert over orange alert", () => {
-  assert.equal(floodSeverity({ isRedAlert: true, isOrangeAlert: true }), "critical");
-  assert.equal(floodSeverity({ isRedAlert: false, isOrangeAlert: true }), "warning");
-  assert.equal(floodSeverity({ isRedAlert: false, isOrangeAlert: false }), "advisory");
+test("floodSeverity reports an advisory while any basin is on watch", () => {
+  assert.equal(
+    floodSeverity({
+      basinsOnWatch: [{ name: "Pampanga", bulletinUrl: null }],
+      basinsMonitored: 22,
+    }),
+    "advisory",
+  );
+});
+
+test("floodSeverity stays at info when no basin is on watch", () => {
+  assert.equal(floodSeverity({ basinsOnWatch: [], basinsMonitored: 22 }), "info");
 });

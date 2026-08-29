@@ -1,22 +1,30 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "noImplicitReturns": true,
-    "noUnusedLocals": true,
+    // "nodenext" replaces the deprecated "node"/"node10" pair. It resolves the
+    // way Node itself does, so package "exports" maps — which firebase-admin
+    // and cheerio both use for their subpaths — are honoured rather than
+    // guessed at. Emit stays CommonJS because package.json declares no "type",
+    // which is what Firebase Functions loads from lib/index.js.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
     "rootDir": "src",
     "outDir": "lib",
     "sourceMap": true,
+
     "strict": true,
-    "target": "ES2020",
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true,
+
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "compileOnSave": true,
-  "include": [
-    "src/**/*"
-  ],
-  "exclude": [
-    "src/**/*.test.ts"
-  ]
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts"]
 }

@@ -1,9 +1,14 @@
-import { FCM_TOPIC_QUAKE, QUAKE_NOTIFY_MAG } from "../../config/constants";
+import {
+  FCM_TOPIC_QUAKE,
+  QUAKE_NOTIFY_MAG,
+  QUAKE_NOTIFY_MAX_AGE_MINUTES,
+} from "../../config/constants";
 import { HazardEvent } from "../../domain/entities/hazard-event";
 import { HazardEventRepository } from "../../domain/ports/hazard-event.repository";
 import { Logger } from "../../domain/ports/logger";
 import { Notifier } from "../../domain/ports/notifier";
 import { QuakeObservation, QuakeSource } from "../../domain/ports/quake-source";
+import { quakeEventId } from "../../domain/rules/event-id.rules";
 import { quakeSeverity } from "../../domain/rules/severity.rules";
 
 export class IngestPhivolcsQuakesUseCase {
@@ -12,6 +17,7 @@ export class IngestPhivolcsQuakesUseCase {
     private readonly hazardEvents: HazardEventRepository,
     private readonly notifier: Notifier,
     private readonly logger: Logger,
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   async execute(): Promise<void> {
@@ -24,41 +30,26 @@ export class IngestPhivolcsQuakesUseCase {
     );
     const savedCount = results.filter(Boolean).length;
 
-    this.logger.info("Ingestion complete", { rowsScanned: observations.length, newEvents: savedCount });
+    this.logger.info("Ingestion complete", {
+      rowsScanned: observations.length,
+      newEvents: savedCount,
+    });
   }
 
   private async processObservation(observation: QuakeObservation): Promise<boolean> {
     try {
-      const eventId = `phivolcs_eq_${new Date(observation.occurredAt).getTime()}`;
-      if (await this.hazardEvents.exists(eventId)) return false;
+      const event = this.toHazardEvent(observation);
 
-      const severity = quakeSeverity(observation.magnitude);
-      const event: HazardEvent = {
-        id: eventId,
-        type: "quake",
-        severity,
-        sourceType: "official",
-        title: `M${observation.magnitude.toFixed(1)} Earthquake — ${observation.location}`,
-        plainSummary: `Depth: ${observation.depthKm} km. Verified seismic report from DOST-PHIVOLCS.`,
-        issuedAt: observation.occurredAt,
-        source: "DOST-PHIVOLCS",
-        raw: {
-          lat: observation.lat,
-          lon: observation.lon,
-          depthKm: observation.depthKm,
-          magnitude: observation.magnitude,
-          location: observation.location,
-        },
-      };
+      const created = await this.hazardEvents.saveIfAbsent(event);
+      if (!created) return false;
 
-      await this.hazardEvents.save(event);
       this.logger.info("Quake event saved", {
-        eventId,
+        eventId: event.id,
         magnitude: observation.magnitude,
         location: observation.location,
       });
 
-      if (observation.magnitude >= QUAKE_NOTIFY_MAG) {
+      if (this.shouldNotify(observation)) {
         await this.notifier.send(
           {
             topic: FCM_TOPIC_QUAKE,
@@ -77,5 +68,48 @@ export class IngestPhivolcsQuakesUseCase {
       });
       return false;
     }
+  }
+
+  private toHazardEvent(observation: QuakeObservation): HazardEvent {
+    return {
+      id: quakeEventId(observation),
+      type: "quake",
+      severity: quakeSeverity(observation.magnitude),
+      sourceType: "official",
+      title: `M${observation.magnitude.toFixed(1)} Earthquake — ${observation.location}`,
+      plainSummary: `Depth: ${observation.depthKm} km. Verified seismic report from DOST-PHIVOLCS.`,
+      issuedAt: observation.occurredAt,
+      source: "DOST-PHIVOLCS",
+      raw: {
+        lat: observation.lat,
+        lon: observation.lon,
+        depthKm: observation.depthKm,
+        magnitude: observation.magnitude,
+        location: observation.location,
+      },
+    };
+  }
+
+  /**
+   * Strong enough to matter, and recent enough to still be actionable. The age
+   * check keeps a backfill or a catch-up run from pushing alerts for quakes
+   * that are already over.
+   */
+  private shouldNotify(observation: QuakeObservation): boolean {
+    if (observation.magnitude < QUAKE_NOTIFY_MAG) return false;
+
+    const ageMinutes =
+      (this.now().getTime() - Date.parse(observation.occurredAt)) / 60_000;
+    if (Number.isNaN(ageMinutes)) return false;
+
+    if (ageMinutes > QUAKE_NOTIFY_MAX_AGE_MINUTES) {
+      this.logger.info("Quake too old to alert on — saved without notification", {
+        eventId: quakeEventId(observation),
+        ageMinutes: Math.round(ageMinutes),
+      });
+      return false;
+    }
+
+    return true;
   }
 }

@@ -13,8 +13,13 @@ export function cycloneSeverity(maxSignal: number): SeverityLevel {
   return "advisory";
 }
 
+/**
+ * The basin status table publishes a single binary state per basin — a basin is
+ * on flood watch or it is not. PAGASA's finer classes (Flood Advisory, Flood
+ * Warning, Critical Flood Warning) appear only inside each basin's PDF bulletin,
+ * which this pipeline does not read, so classifying beyond "advisory" here would
+ * be inventing a severity the source never gave us.
+ */
 export function floodSeverity(bulletin: FloodBulletin): SeverityLevel {
-  if (bulletin.isRedAlert) return "critical";
-  if (bulletin.isOrangeAlert) return "warning";
-  return "advisory";
+  return bulletin.basinsOnWatch.length > 0 ? "advisory" : "info";
 }

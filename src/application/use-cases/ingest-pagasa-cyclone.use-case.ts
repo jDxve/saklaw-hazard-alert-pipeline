@@ -4,6 +4,7 @@ import { CycloneSource } from "../../domain/ports/cyclone-source";
 import { HazardEventRepository } from "../../domain/ports/hazard-event.repository";
 import { Logger } from "../../domain/ports/logger";
 import { Notifier } from "../../domain/ports/notifier";
+import { cycloneEventId } from "../../domain/rules/event-id.rules";
 import { cycloneSeverity } from "../../domain/rules/severity.rules";
 
 export class IngestPagasaCycloneUseCase {
@@ -20,18 +21,12 @@ export class IngestPagasaCycloneUseCase {
     if (!bulletin) return;
 
     const issuedAt = this.now().toISOString();
-    const eventId = `pagasa_tc_${issuedAt.slice(0, 13)}`;
+    const eventId = cycloneEventId(issuedAt, bulletin.maxSignal);
 
-    if (await this.hazardEvents.exists(eventId)) {
-      this.logger.info("Cyclone bulletin already recorded for this hour.", { eventId });
-      return;
-    }
-
-    const severity = cycloneSeverity(bulletin.maxSignal);
     const event: HazardEvent = {
       id: eventId,
       type: "cyclone",
-      severity,
+      severity: cycloneSeverity(bulletin.maxSignal),
       sourceType: "official",
       title: `PAGASA: ${bulletin.stormName} (Signal #${bulletin.maxSignal} Active)`,
       plainSummary: `Active tropical cyclone in PAR. Highest wind signal hoisted: TCWS #${bulletin.maxSignal}.`,
@@ -40,8 +35,17 @@ export class IngestPagasaCycloneUseCase {
       raw: { stormName: bulletin.stormName, maxSignal: bulletin.maxSignal, checkedAt: issuedAt },
     };
 
-    await this.hazardEvents.save(event);
-    this.logger.info("Cyclone bulletin saved", { eventId, stormName: bulletin.stormName, maxSignal: bulletin.maxSignal });
+    const created = await this.hazardEvents.saveIfAbsent(event);
+    if (!created) {
+      this.logger.info("Cyclone bulletin already recorded at this signal.", { eventId });
+      return;
+    }
+
+    this.logger.info("Cyclone bulletin saved", {
+      eventId,
+      stormName: bulletin.stormName,
+      maxSignal: bulletin.maxSignal,
+    });
 
     await this.notifier.send(
       {

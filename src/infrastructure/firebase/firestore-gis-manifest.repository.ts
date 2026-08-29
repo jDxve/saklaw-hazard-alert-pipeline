@@ -7,16 +7,18 @@ const MANIFEST_DOC_ID = "noah_gis";
 export class FirestoreGisManifestRepository implements GisManifestRepository {
   constructor(private readonly db: Firestore) {}
 
-  async getCurrentCommitSha(): Promise<string | null> {
-    const snapshot = await this.docRef().get();
-    return snapshot.exists ? (snapshot.data()?.commitSha ?? null) : null;
-  }
+  async saveIfCommitChanged(manifest: GisManifest): Promise<boolean> {
+    const ref = this.db.collection(MANIFEST_COLLECTION).doc(MANIFEST_DOC_ID);
 
-  async save(manifest: GisManifest): Promise<void> {
-    await this.docRef().set(manifest);
-  }
-
-  private docRef() {
-    return this.db.collection(MANIFEST_COLLECTION).doc(MANIFEST_DOC_ID);
+    // The compare and the write share one transaction, so a concurrent
+    // webhook and daily poll cannot both decide the revision is new.
+    return this.db.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (snapshot.exists && snapshot.data()?.commitSha === manifest.commitSha) {
+        return false;
+      }
+      tx.set(ref, manifest);
+      return true;
+    });
   }
 }

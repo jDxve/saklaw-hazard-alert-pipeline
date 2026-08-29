@@ -17,6 +17,9 @@ export interface CycloneDetails {
 
 export interface FloodDetails {
   checkedAt: string;
+  /** Names of the river basins that were on flood watch at checkedAt. */
+  basinsOnWatch: readonly string[];
+  basinsMonitored: number;
 }
 
 export interface HazardEvent {

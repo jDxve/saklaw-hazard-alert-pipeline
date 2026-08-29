@@ -7,6 +7,13 @@ export interface GisManifest {
 }
 
 export interface GisManifestRepository {
-  getCurrentCommitSha(): Promise<string | null>;
-  save(manifest: GisManifest): Promise<void>;
+  /**
+   * Stores the manifest only if the recorded commit differs, atomically.
+   * Returns true when the manifest advanced, false when it was already current.
+   *
+   * The daily poll and the Hugging Face webhook are separate functions that can
+   * observe the same new commit at the same time; without atomicity both would
+   * conclude "new revision" and broadcast a duplicate OTA update.
+   */
+  saveIfCommitChanged(manifest: GisManifest): Promise<boolean>;
 }

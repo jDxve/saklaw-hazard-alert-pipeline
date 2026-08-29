@@ -71,13 +71,17 @@ Each source has its own schedule, tuned to how often it actually changes — not
 ## Processing flow (per hazard)
 
 1. **Fetch** — an adapter (e.g. `PhivolcsQuakeSource`) scrapes/calls the source and returns typed observations.
-2. **Dedupe check** — a deterministic event ID is derived (e.g. `phivolcs_eq_<timestamp>`, `pagasa_tc_<hour>`) and checked against Firestore (`hazard_events` collection) before doing any work.
+2. **Dedupe check** — a deterministic event ID is derived and written with an atomic conditional create against Firestore (`hazard_events`), so a concurrent run cannot save or alert twice:
+   - Quake: `phivolcs_eq_<epochMs>_<lat>_<lon>_m<mag>` — position and magnitude are part of the key because PHIVOLCS timestamps only have minute resolution, and two quakes in the same minute would otherwise collide.
+   - Cyclone: `pagasa_tc_<utcHour>_s<signal>` / Flood: `pagasa_flood_<utcHour>_<severity>` — the severity is part of the key so an **escalation within the same hour** (e.g. TCWS 2 → 5) is still recorded and pushed rather than swallowed as a duplicate.
 3. **Classify severity** — pure functions in `domain/rules/severity.rules.ts`:
    - Quake: `≥6.0` critical, `≥4.5` warning, else info
    - Cyclone: `≥TCWS 3` critical, `≥TCWS 2` warning, else advisory
    - Flood: red alert → critical, orange alert → warning, else advisory
 4. **Save** — the normalized `HazardEvent` is written to Firestore.
 5. **Notify (conditional)** — an FCM push is sent to a topic (`hazards_ph_critical`, `cyclone_ph_alerts`, `flood_ph_alerts`, `gis_layer_updates`) only when the event meets the notify threshold (e.g. quake magnitude ≥ 5.0; cyclones and floods always notify once saved).
+
+   Quakes also carry a **recency guard** (`QUAKE_NOTIFY_MAX_AGE_MINUTES`, default 60): an event older than the window is still saved but never pushed, so a redeploy, a dedupe-key change, or the scheduler catching up after an outage cannot alert users about earthquakes that are already over.
 
 Each hazard pipeline runs independently and failures are isolated — one source failing (e.g. PAGASA site down) doesn't block the others, and a single malformed row within a source is caught and skipped rather than failing the whole batch.
 
@@ -95,6 +99,13 @@ Each hazard pipeline runs independently and failures are isolated — one source
 ```bash
 npm run build        # tsc compile to lib/
 npm run build:watch  # tsc in watch mode
-npm run lint          # eslint .
-npm test               # tsx --test src/**/*.test.ts
+npm run typecheck    # tsc --noEmit, including the *.test.ts files
+npm run lint         # eslint .
+npm test             # runs every src/**/*.test.ts through tsx --test
 ```
+
+`npm test` goes through `scripts/run-tests.mjs`, which collects the test files
+itself. It cannot be a plain shell glob: npm runs scripts through `sh`, which has
+no globstar, and Node 20's built-in test discovery only matches JavaScript
+extensions — so the recursive pattern matched nothing and the suite reported
+"no tests" instead of running.

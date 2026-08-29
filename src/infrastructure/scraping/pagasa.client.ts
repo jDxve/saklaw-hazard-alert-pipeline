@@ -1,10 +1,10 @@
 import * as cheerio from "cheerio";
-import { PAGASA_FLOOD_URL, PAGASA_NO_CYCLONE_PHRASE, PAGASA_URL } from "../../config/constants";
+import { PAGASA_FLOOD_URL, PAGASA_URL } from "../../config/constants";
 import { CycloneBulletin, CycloneSource } from "../../domain/ports/cyclone-source";
 import { FloodBulletin, FloodSource } from "../../domain/ports/flood-source";
 import { Logger } from "../../domain/ports/logger";
 import { HttpClient } from "../http/http-client";
-import { detectFloodAlertMarkers, detectMaxTcwsSignal, extractStormName } from "./pagasa.parser";
+import { parseCycloneBulletin, parseRiverBasinTable } from "./pagasa.parser";
 
 export class PagasaWeatherSource implements CycloneSource {
   constructor(
@@ -21,19 +21,30 @@ export class PagasaWeatherSource implements CycloneSource {
       return null;
     }
 
-    const bodyText = cheerio.load(html)("body").text();
-    const hasActiveCyclone =
-      !bodyText.includes(PAGASA_NO_CYCLONE_PHRASE) && bodyText.includes("TROPICAL CYCLONE");
+    const reading = parseCycloneBulletin(cheerio.load(html));
 
-    if (!hasActiveCyclone) {
-      this.logger.info("No active tropical cyclone within PAR.");
-      return null;
+    switch (reading.kind) {
+      case "none":
+        this.logger.info("No active tropical cyclone within PAR.");
+        return null;
+
+      case "unreadable":
+        // Logged as an error, not an all-clear: the page was fetched but could
+        // not be understood, so we know nothing about the current state.
+        this.logger.error(
+          "Cyclone bulletin could not be read — treating as unknown, not as calm",
+          new Error(reading.reason),
+          { url: PAGASA_URL },
+        );
+        return null;
+
+      case "active":
+        this.logger.info("Active tropical cyclone detected", {
+          stormName: reading.bulletin.stormName,
+          maxSignal: reading.bulletin.maxSignal,
+        });
+        return reading.bulletin;
     }
-
-    return {
-      stormName: extractStormName(bodyText),
-      maxSignal: detectMaxTcwsSignal(bodyText),
-    };
   }
 }
 
@@ -52,9 +63,27 @@ export class PagasaFloodSource implements FloodSource {
       return null;
     }
 
-    const bodyText = cheerio.load(html)("body").text();
-    const { hasFloodAlert, isRedAlert, isOrangeAlert } = detectFloodAlertMarkers(bodyText);
+    const { monitored, onWatch } = parseRiverBasinTable(cheerio.load(html));
 
-    return hasFloodAlert ? { isRedAlert, isOrangeAlert } : null;
+    if (monitored === 0) {
+      this.logger.error(
+        "River basin table not found — treating as unknown, not as calm",
+        new Error("basin table missing or restructured"),
+        { url: PAGASA_FLOOD_URL },
+      );
+      return null;
+    }
+
+    if (onWatch.length === 0) {
+      this.logger.info("No river basin on flood watch.", { basinsMonitored: monitored });
+      return null;
+    }
+
+    this.logger.info("River basins on flood watch", {
+      basinsMonitored: monitored,
+      basinsOnWatch: onWatch.map((basin) => basin.name),
+    });
+
+    return { basinsOnWatch: onWatch, basinsMonitored: monitored };
   }
 }

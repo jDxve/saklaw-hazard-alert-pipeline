@@ -1,8 +1,11 @@
-import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
 import { Agent as HttpAgent } from "node:http";
 import { Agent as HttpsAgent } from "node:https";
-import { MAX_RESPONSE_BYTES } from "../../config/constants";
+import { rootCertificates } from "node:tls";
+import { HTTP_CACHE_MAX_ENTRIES, MAX_RESPONSE_BYTES } from "../../config/constants";
 import { Logger } from "../../domain/ports/logger";
+import { PHIVOLCS_ISSUER_CA } from "./phivolcs-ca";
+import { ResponseCache } from "./response-cache";
 import { withRetry } from "./with-retry";
 
 export interface HttpClient {
@@ -10,8 +13,11 @@ export interface HttpClient {
   getJson<T>(url: string): Promise<T>;
 }
 
+const NOT_MODIFIED = 304;
+
 export class AxiosHttpClient implements HttpClient {
   private readonly client: AxiosInstance;
+  private readonly cache = new ResponseCache(HTTP_CACHE_MAX_ENTRIES);
 
   constructor(
     timeoutMs: number,
@@ -28,7 +34,15 @@ export class AxiosHttpClient implements HttpClient {
       maxContentLength: MAX_RESPONSE_BYTES,
       maxBodyLength: MAX_RESPONSE_BYTES,
       httpAgent: new HttpAgent({ keepAlive: true }),
-      httpsAgent: new HttpsAgent({ keepAlive: true }),
+      httpsAgent: new HttpsAgent({
+        keepAlive: true,
+        // Node's own roots, plus the one intermediate PHIVOLCS forgets to send.
+        // Certificate verification stays on for every host.
+        ca: [...rootCertificates, PHIVOLCS_ISSUER_CA],
+      }),
+      // 304 is a successful answer to a conditional request, not a failure.
+      // Without this axios would reject it and the retry layer would see an error.
+      validateStatus: (status) => status === NOT_MODIFIED || (status >= 200 && status < 300),
     });
   }
 
@@ -50,12 +64,39 @@ export class AxiosHttpClient implements HttpClient {
   }
 
   private async get<T>(url: string, config: AxiosRequestConfig): Promise<T> {
-    const response = await withRetry(
-      () => this.client.get<T>(url, config),
+    const response = await this.request<T>(url, config, this.cache.conditionalHeaders(url));
+
+    if (response.status !== NOT_MODIFIED) {
+      this.cache.store(url, response.headers as Record<string, unknown>, response.data);
+      return response.data;
+    }
+
+    const cached = this.cache.read(url);
+    if (cached) {
+      this.logger.info("Source unchanged since last poll — reusing cached body", { url });
+      return cached.data as T;
+    }
+
+    // Only reachable if the entry disappeared after its validator was sent.
+    // Ask again unconditionally so a 304 we cannot satisfy never fails a sync.
+    const fresh = await this.request<T>(url, config, {});
+    this.cache.store(url, fresh.headers as Record<string, unknown>, fresh.data);
+    return fresh.data;
+  }
+
+  private request<T>(
+    url: string,
+    config: AxiosRequestConfig,
+    conditionalHeaders: Record<string, string>,
+  ): Promise<AxiosResponse<T>> {
+    return withRetry(
+      () => this.client.get<T>(url, {
+        ...config,
+        headers: { ...config.headers, ...conditionalHeaders },
+      }),
       this.maxRetryAttempts,
       this.logger,
       `GET ${url}`,
     );
-    return response.data;
   }
 }

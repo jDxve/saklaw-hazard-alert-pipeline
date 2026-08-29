@@ -39,6 +39,9 @@ export const RETRY_MAX_DELAY_MS  = 8_000;
 /** Guards against a malformed or hostile upstream response exhausting function memory. */
 export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
+/** Only a handful of URLs are ever polled; this is a ceiling, not a working size. */
+export const HTTP_CACHE_MAX_ENTRIES = 8;
+
 export const FCM_TOPIC_QUAKE   = "hazards_ph_critical" as const;
 export const FCM_TOPIC_CYCLONE = "cyclone_ph_alerts"   as const;
 export const FCM_TOPIC_FLOOD   = "flood_ph_alerts"     as const;

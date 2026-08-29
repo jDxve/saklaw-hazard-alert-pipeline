@@ -10,7 +10,11 @@ export interface ScheduledCycloneSyncDeps {
 export function registerScheduledCycloneSync(deps: ScheduledCycloneSyncDeps) {
   return onSchedule(
     {
-      schedule: "every 20 minutes",
+      // PAGASA serves these pages with `cache-control: max-age=60` behind a
+      // CDN, so five minutes is still five times more conservative than the
+      // freshness they publish — and it cuts the worst-case blind spot from
+      // twenty minutes to five, which matters most for flooding.
+      schedule: "every 5 minutes",
       timeZone: "Asia/Manila",
       timeoutSeconds: 60,
       memory: "256MiB",

@@ -1,111 +1,126 @@
 # Saklaw Hazard Alert Pipeline
 
-**Version:** 1.1.0
+The backend for **Saklaw**, an app that tells you if there's a hazard near you
+in the Philippines — earthquakes, typhoons, floods.
 
-Backend data pipeline (Firebase Cloud Functions, TypeScript) that feeds the **Saklaw** mobile app with official Philippine hazard information.
+It checks government websites on a schedule, saves what it finds to Firestore,
+and pushes a notification when something actually matters. No UI, no API. Just
+the thing quietly running in the background.
 
-## What this is
+## What it watches
 
-A scheduled ingestion service that scrapes/polls official Philippine government hazard sources, normalizes each report into a common `HazardEvent` shape, deduplicates it against Firestore, and — when a report crosses a severity threshold — pushes a push notification (FCM) to subscribed app users. It also mirrors a third-party hazard-map dataset (Project NOAH via Hugging Face) so the app can display up-to-date flood/landslide/storm-surge overlay maps.
-
-It has no UI of its own — it is the always-on backend that keeps the Saklaw app's hazard feed and map layers current.
-
-## Purpose
-
-Filipinos need a single, trustworthy, low-latency source of truth for hazards (earthquakes, tropical cyclones, floods) instead of manually checking PHIVOLCS/PAGASA websites. This pipeline:
-
-- **Aggregates** official sources into one consistent event format.
-- **Classifies severity** (info / advisory / warning / critical) using fixed domain rules, not raw source text.
-- **Deduplicates** so the same earthquake or bulletin isn't re-saved or re-notified on every poll.
-- **Notifies** only when a hazard is significant enough to matter (e.g. M5.0+ earthquakes, TCWS-bearing cyclones, red/orange flood alerts).
-- **Keeps hazard map layers fresh** by watching for new GIS dataset revisions and notifying the app to fetch updated map tiles.
-
-## Data sources → hazard types
-
-| Source | Type | Fetch method |
+| Source | Looking for | How often |
 |---|---|---|
-| DOST-PHIVOLCS (earthquake bulletin) | `quake` | HTML scrape |
-| DOST-PAGASA (weather bulletin) | `cyclone` | HTML scrape |
-| DOST-PAGASA River Basin Center (flood portal) | `flood` | HTML scrape |
-| Project NOAH hazard maps (Hugging Face dataset) | GIS layer revisions (flood/landslide/storm surge/debris flow tiles) | Hugging Face API + webhook |
+| PHIVOLCS | Earthquakes | every 2 min |
+| PAGASA | Typhoons + wind signals | every 5 min |
+| PAGASA | River basins on flood watch | every 5 min |
+| Project NOAH (via Hugging Face) | New hazard map tiles | daily + webhook |
 
-## Architecture
+Quakes get checked hardest because they arrive without warning. PAGASA serves
+its pages with `cache-control: max-age=60` behind a CDN, so five minutes is
+already five times more polite than the freshness they advertise — and it keeps
+the blind spot short, which matters most for floods.
 
-The codebase follows a **ports & adapters (hexagonal) architecture**:
+PHIVOLCS sends an ETag, so unchanged polls come back as an empty 304 instead of
+re-downloading a 3.8 MB page. PAGASA sends no validator, so those always fetch
+in full.
 
-```
-src/
-├── domain/            # Pure business logic — no I/O, no framework
-│   ├── entities/       HazardEvent and its variant "raw" payloads
-│   ├── ports/           Interfaces: *Source, *Repository, Notifier, Logger
-│   └── rules/           Severity classification (quake/cyclone/flood)
-├── application/
-│   └── use-cases/      Orchestration: fetch → dedupe → classify → save → notify
-├── infrastructure/     # Concrete adapters implementing the ports
-│   ├── scraping/        PHIVOLCS/PAGASA HTML parsers + clients, NOAH HF client
-│   ├── firebase/        Firestore repositories, FCM notifier, app init
-│   ├── http/             Axios client with timeout + retry
-│   └── logging/          Console logger
-├── presentation/
-│   └── functions/      Firebase Functions entrypoints (schedule/HTTP triggers)
-├── config/constants.ts # URLs, thresholds, topics, timeouts
-└── index.ts             Composition root — wires adapters into use cases, exports functions
-```
-
-This separation means the ingestion/classification logic (`application`, `domain`) has zero dependency on Firebase or Axios, and is unit-testable in isolation (see the `*.test.ts` files next to the parsers and rules).
-
-## Cloud Functions (entrypoints)
-
-Defined in `src/index.ts`, deployed to region `asia-southeast1`:
-
-| Export | Trigger | Purpose |
-|---|---|---|
-| `syncPhivolcsQuakes` | Schedule — every 2 minutes (Asia/Manila) | Runs the PHIVOLCS quake pipeline |
-| `syncPagasaCyclone` | Schedule — every 20 minutes (Asia/Manila) | Runs the PAGASA cyclone pipeline |
-| `syncPagasaFlood` | Schedule — every 20 minutes (Asia/Manila) | Runs the PAGASA flood pipeline |
-| `syncNoahGisDataset` | Schedule — daily at 02:00 (Asia/Manila) | Polls the Project NOAH Hugging Face dataset API for a new commit revision |
-| `noahHuggingFaceWebhook` | HTTPS POST | Hugging Face webhook (secret-authenticated) that reacts immediately when the NOAH dataset repo gets a new commit, instead of waiting for the daily poll |
-
-Each source has its own schedule, tuned to how often it actually changes — not one flat interval for all three. PHIVOLCS quake bulletins are time-critical so they're polled tightly; PAGASA cyclone/flood bulletins are issued on the order of hours, so polling them every minute would only hammer a government site with no public API for zero freshness gain (and risk the scraper's IP getting rate-limited or blocked). Failures in one source don't affect the others since each runs as an independent scheduled function.
-
-## Processing flow (per hazard)
-
-1. **Fetch** — an adapter (e.g. `PhivolcsQuakeSource`) scrapes/calls the source and returns typed observations.
-2. **Dedupe check** — a deterministic event ID is derived and written with an atomic conditional create against Firestore (`hazard_events`), so a concurrent run cannot save or alert twice:
-   - Quake: `phivolcs_eq_<epochMs>_<lat>_<lon>_m<mag>` — position and magnitude are part of the key because PHIVOLCS timestamps only have minute resolution, and two quakes in the same minute would otherwise collide.
-   - Cyclone: `pagasa_tc_<utcHour>_s<signal>` / Flood: `pagasa_flood_<utcHour>_<severity>` — the severity is part of the key so an **escalation within the same hour** (e.g. TCWS 2 → 5) is still recorded and pushed rather than swallowed as a duplicate.
-3. **Classify severity** — pure functions in `domain/rules/severity.rules.ts`:
-   - Quake: `≥6.0` critical, `≥4.5` warning, else info
-   - Cyclone: `≥TCWS 3` critical, `≥TCWS 2` warning, else advisory
-   - Flood: red alert → critical, orange alert → warning, else advisory
-4. **Save** — the normalized `HazardEvent` is written to Firestore.
-5. **Notify (conditional)** — an FCM push is sent to a topic (`hazards_ph_critical`, `cyclone_ph_alerts`, `flood_ph_alerts`, `gis_layer_updates`) only when the event meets the notify threshold (e.g. quake magnitude ≥ 5.0; cyclones and floods always notify once saved).
-
-   Quakes also carry a **recency guard** (`QUAKE_NOTIFY_MAX_AGE_MINUTES`, default 60): an event older than the window is still saved but never pushed, so a redeploy, a dedupe-key change, or the scheduler catching up after an outage cannot alert users about earthquakes that are already over.
-
-Each hazard pipeline runs independently and failures are isolated — one source failing (e.g. PAGASA site down) doesn't block the others, and a single malformed row within a source is caught and skipped rather than failing the whole batch.
-
-## Tech stack
-
-- **TypeScript** targeting Node.js ≥ 20
-- **Firebase Functions v2** (scheduler + HTTPS triggers) and **Firebase Admin** (Firestore + Cloud Messaging)
-- **Axios** for HTTP with a built-in timeout/retry wrapper
-- **Cheerio** for HTML scraping/parsing of PHIVOLCS/PAGASA pages
-- **Zod** for webhook payload validation
-- **tsx --test** for the test runner, **ESLint** for linting
-
-## Scripts
+## Running it
 
 ```bash
-npm run build        # tsc compile to lib/
-npm run build:watch  # tsc in watch mode
-npm run typecheck    # tsc --noEmit, including the *.test.ts files
-npm run lint         # eslint .
-npm test             # runs every src/**/*.test.ts through tsx --test
+npm install
+npm test        # 106 tests, all offline
+npm run build
 ```
 
-`npm test` goes through `scripts/run-tests.mjs`, which collects the test files
-itself. It cannot be a plain shell glob: npm runs scripts through `sh`, which has
-no globstar, and Node 20's built-in test discovery only matches JavaScript
-extensions — so the recursive pattern matched nothing and the suite reported
-"no tests" instead of running.
+Also `npm run lint` and `npm run typecheck`.
+
+## How it works
+
+Every source does the same five things, and they run independently — if PAGASA
+is down, quakes still work:
+
+```
+fetch → skip if seen → rate severity → save → maybe notify
+```
+
+Events get a predictable ID and are written with Firestore's `create`, which
+fails if that ID exists. One atomic step instead of check-then-write, so two
+runs at once can't both think they're first and double-notify.
+
+The IDs carry more than you'd expect on purpose. Quakes include position and
+magnitude, because PHIVOLCS timestamps only go down to the minute and two quakes
+in the same minute would collide. Typhoons include the wind signal so a storm
+jumping from Signal 2 to 5 within an hour counts as new — that's the alert you
+least want swallowed as a duplicate.
+
+Severity is decided in `domain/rules/`, not read off the page. Notifications
+only fire for M5.0+ quakes that happened in the last hour, so a redeploy never
+alerts anyone about an earthquake that's already over.
+
+## Not wired up yet
+
+**Volcanoes.** The app's notification settings offer them, but nothing here
+produces them. The data is all there whenever you want it:
+
+- `wovodat.phivolcs.dost.gov.ph/bulletin/list-of-bulletin` has every alert level
+  in one 9 KB page — `Taal - 1  Kanlaon - 2  Bulusan - 1  Pinatubo - 0  Mayon - 2`
+  — inside `<span class="mvo-scroll-level">`, one stable class per volcano.
+- Each volcano has a dated bulletin with an English version
+  (`/bulletin/activity-mvo?bid=NNNNN&lang=en`) carrying the unrest descriptor,
+  the hazards list, and the danger zone. **Parse the radius, don't hardcode it**
+  — Mayon says 6 km, Kanlaon says 4 km, same sentence either way.
+- Coordinates are static, so just bake them in:
+  Taal `14.01011, 120.99780` · Kanlaon `10.41127, 123.13229` ·
+  Bulusan `12.76853, 124.05445` · Pinatubo `15.14162, 120.35084` ·
+  Mayon `13.25519, 123.68615`
+
+Alert levels barely move, so notify on a *change* in level rather than on every
+poll — same trick as the cyclone IDs, put the level in the event ID.
+
+**Firestore rules.** There's no `firestore.rules` or `firestore.indexes.json` in
+here, so whether the app can read `hazard_events` depends on a console setting
+nobody has written down. Worth fixing before the app tries to read anything.
+
+## Notes to future me
+
+**PHIVOLCS and PAGASA have no APIs.** That's why this scrapes HTML. If you ever
+find a real API, delete half this repo happily.
+
+**PHIVOLCS's TLS chain is incomplete.** Their servers send only the leaf
+certificate, no intermediate. Browsers and macOS `curl` quietly fetch the
+missing one; Node does not, so it fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`
+and Cloud Functions could never reach the site at all. The missing GlobalSign
+intermediate is bundled in `infrastructure/http/phivolcs-ca.ts` and handed to
+the HTTPS agent. Verification stays fully on — we just supply the link they left
+out. A test goes red 90 days before that certificate expires.
+
+**Don't search the whole page for words.** Every scraper here broke this way at
+some point, and not one of them threw an error:
+
+- The flood page has a permanent paragraph explaining what "Flood Warning"
+  means. Searching for that phrase reported a flood every hour, forever.
+- The cyclone scraper pointed at `/weather`, which has no bulletin on it, so it
+  could never detect a typhoon.
+- `25 August 2026 - 02:15 PM` makes `new Date()` return `Invalid Date` because
+  of the ` - `. Every quake got dropped, silently.
+
+Match on structure — a CSS class, a specific panel — and scope it to the part of
+the page holding the data.
+
+**"Couldn't read the page" is not "nothing is happening."** An app that reports
+all-clear because its scraper broke is failing the one way it really must not.
+Parsers here return three answers, not two.
+
+**`PH_BOUNDS` is wider than the country** — past Batanes, out over the Philippine
+Trench — because offshore quakes still matter to people onshore. It stops at 4°N
+so the Indonesian quakes PHIVOLCS lists for reference stay out.
+
+**`npm test` runs through a script.** It can't be a plain glob: npm uses `sh`,
+which doesn't do `**`, so the pattern matched nothing and the suite passed
+without running anything.
+
+## Built with
+
+TypeScript on Node 20, Firebase Functions v2, Firestore + FCM, Cheerio for
+scraping, Zod for the webhook, `tsx --test` for tests.

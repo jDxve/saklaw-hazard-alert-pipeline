@@ -1,6 +1,12 @@
 {
+  // Typechecks everything the build config leaves out: the *.test.ts files and
+  // the tooling scripts. rootDir is widened because these live outside src/,
+  // which is safe here since nothing is emitted.
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true },
-  "include": ["src/**/*"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "scripts/**/*", "eslint.config.ts"],
   "exclude": []
 }

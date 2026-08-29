@@ -1,33 +1,35 @@
-#!/usr/bin/env node
-// Collects the TypeScript test files and hands them to `tsx --test`.
-//
-// The glob cannot be left to the shell: npm runs scripts through `sh`, which
-// has no globstar, so the recursive pattern silently expanded to nothing and
-// the suite reported "no tests" without executing one. Node 20's own test
-// discovery doesn't help either — it only matches JavaScript extensions.
+#!/usr/bin/env tsx
+/**
+ * Collects the TypeScript test files and hands them to `tsx --test`.
+ *
+ * The glob cannot be left to the shell: npm runs scripts through `sh`, which
+ * has no globstar, so the recursive pattern silently expanded to nothing and
+ * the suite reported "no tests" without executing one. Node's own test
+ * discovery does not help either — it only matches JavaScript extensions.
+ */
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(__dirname, "..");
 const TEST_ROOT = join(ROOT, "src");
+const TEST_SUFFIX = ".test.ts";
 const IGNORED_DIRS = new Set(["node_modules", "lib", ".git"]);
 
-function collectTestFiles(dir) {
+function collectTestFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
       return IGNORED_DIRS.has(entry.name) ? [] : collectTestFiles(path);
     }
-    return entry.name.endsWith(".test.ts") ? [path] : [];
+    return entry.name.endsWith(TEST_SUFFIX) ? [path] : [];
   });
 }
 
 const files = collectTestFiles(TEST_ROOT).sort();
 
 if (files.length === 0) {
-  console.error(`No *.test.ts files found under ${TEST_ROOT}`);
+  console.error(`No *${TEST_SUFFIX} files found under ${TEST_ROOT}`);
   process.exit(1);
 }
 

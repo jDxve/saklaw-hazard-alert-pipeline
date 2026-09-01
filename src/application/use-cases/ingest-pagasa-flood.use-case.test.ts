@@ -15,6 +15,16 @@ class FakeFloodSource implements FloodSource {
 }
 
 class InMemoryHazardEventRepository implements HazardEventRepository {
+  // The read side is exercised by the query use case's own tests; ingestion
+  // tests only ever write.
+  async findRecent(): Promise<HazardEvent[]> {
+    return [...this.saved];
+  }
+
+  async findById(id: string): Promise<HazardEvent | null> {
+    return this.saved.find((event) => event.id === id) ?? null;
+  }
+
   readonly saved: HazardEvent[] = [];
   private readonly ids = new Set<string>();
   async saveIfAbsent(event: HazardEvent): Promise<boolean> {

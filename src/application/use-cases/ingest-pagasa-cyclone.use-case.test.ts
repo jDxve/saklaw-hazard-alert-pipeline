@@ -7,6 +7,29 @@ import { Logger } from "../../domain/ports/logger";
 import { Notifier, PushNotification } from "../../domain/ports/notifier";
 import { IngestPagasaCycloneUseCase } from "./ingest-pagasa-cyclone.use-case";
 
+
+/**
+ * A bulletin with only the fields a test cares about set. Everything PAGASA
+ * may omit defaults to its "not published" value, so a test asserting on the
+ * signal does not have to invent a track or a centre to compile.
+ */
+function aBulletin(overrides: Partial<CycloneBulletin> = {}): CycloneBulletin {
+  return {
+    stormName: "PEPITO",
+    category: "Typhoon",
+    maxSignal: 3,
+    issuedAt: null,
+    validUntil: null,
+    center: null,
+    movement: null,
+    maximumWindsKph: null,
+    gustsKph: null,
+    forecastPositions: [],
+    affectedAreas: [],
+    ...overrides,
+  };
+}
+
 class FakeCycloneSource implements CycloneSource {
   constructor(private readonly bulletin: CycloneBulletin | null) {}
   async fetchActiveCyclone(): Promise<CycloneBulletin | null> {
@@ -15,6 +38,16 @@ class FakeCycloneSource implements CycloneSource {
 }
 
 class InMemoryHazardEventRepository implements HazardEventRepository {
+  // The read side is exercised by the query use case's own tests; ingestion
+  // tests only ever write.
+  async findRecent(): Promise<HazardEvent[]> {
+    return [...this.saved];
+  }
+
+  async findById(id: string): Promise<HazardEvent | null> {
+    return this.saved.find((event) => event.id === id) ?? null;
+  }
+
   readonly saved: HazardEvent[] = [];
   private readonly ids = new Set<string>();
   async saveIfAbsent(event: HazardEvent): Promise<boolean> {
@@ -64,7 +97,7 @@ test("saves and notifies an active cyclone bulletin", async () => {
   const notifier = new RecordingNotifier();
 
   await buildUseCase(
-    { stormName: "TYPHOON PEPITO", maxSignal: 3 },
+    aBulletin({ stormName: "TYPHOON PEPITO", maxSignal: 3 }),
     repo,
     notifier,
     () => new Date("2026-08-25T06:05:00Z"),
@@ -79,7 +112,7 @@ test("saves and notifies an active cyclone bulletin", async () => {
 test("does not repeat the same bulletin within the hour", async () => {
   const repo = new InMemoryHazardEventRepository();
   const notifier = new RecordingNotifier();
-  const bulletin: CycloneBulletin = { stormName: "TYPHOON PEPITO", maxSignal: 2 };
+  const bulletin: CycloneBulletin = aBulletin({ stormName: "TYPHOON PEPITO", maxSignal: 2 });
 
   await buildUseCase(bulletin, repo, notifier, () => new Date("2026-08-25T06:05:00Z")).execute();
   await buildUseCase(bulletin, repo, notifier, () => new Date("2026-08-25T06:55:00Z")).execute();
@@ -93,13 +126,13 @@ test("alerts on an escalation that happens inside the same hour", async () => {
   const notifier = new RecordingNotifier();
 
   await buildUseCase(
-    { stormName: "TYPHOON PEPITO", maxSignal: 2 },
+    aBulletin({ stormName: "TYPHOON PEPITO", maxSignal: 2 }),
     repo,
     notifier,
     () => new Date("2026-08-25T06:05:00Z"),
   ).execute();
   await buildUseCase(
-    { stormName: "TYPHOON PEPITO", maxSignal: 5 },
+    aBulletin({ stormName: "TYPHOON PEPITO", maxSignal: 5 }),
     repo,
     notifier,
     () => new Date("2026-08-25T06:55:00Z"),

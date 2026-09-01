@@ -21,4 +21,9 @@ export class FirestoreGisManifestRepository implements GisManifestRepository {
       return true;
     });
   }
+
+  async findCurrent(): Promise<GisManifest | null> {
+    const snapshot = await this.db.collection(MANIFEST_COLLECTION).doc(MANIFEST_DOC_ID).get();
+    return snapshot.exists ? (snapshot.data() as GisManifest) : null;
+  }
 }

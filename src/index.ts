@@ -11,6 +11,7 @@ import {
 import { IngestPagasaCycloneUseCase } from "./application/use-cases/ingest-pagasa-cyclone.use-case";
 import { IngestPagasaFloodUseCase } from "./application/use-cases/ingest-pagasa-flood.use-case";
 import { IngestPhivolcsQuakesUseCase } from "./application/use-cases/ingest-phivolcs-quakes.use-case";
+import { QueryHazardsUseCase } from "./application/use-cases/query-hazards.use-case";
 import { RecordGisDatasetRevisionUseCase } from "./application/use-cases/record-gis-dataset-revision.use-case";
 import { SyncNoahDatasetUseCase } from "./application/use-cases/sync-noah-dataset.use-case";
 import { FcmNotifier } from "./infrastructure/firebase/fcm-notifier";
@@ -22,6 +23,7 @@ import { ConsoleLogger } from "./infrastructure/logging/console-logger";
 import { HuggingFaceNoahDatasetSource } from "./infrastructure/scraping/noah.client";
 import { PagasaFloodSource, PagasaWeatherSource } from "./infrastructure/scraping/pagasa.client";
 import { PhivolcsQuakeSource } from "./infrastructure/scraping/phivolcs.client";
+import { registerHazardsApi } from "./presentation/functions/hazards-api.function";
 import { registerNoahDailySync } from "./presentation/functions/noah-daily-sync.function";
 import { registerNoahWebhook } from "./presentation/functions/noah-webhook.function";
 import { registerScheduledCycloneSync } from "./presentation/functions/scheduled-cyclone-sync.function";
@@ -73,6 +75,8 @@ const recordRevisionUseCase = new RecordGisDatasetRevisionUseCase(
   NOAH_LAYERS,
 );
 
+const queryHazardsUseCase = new QueryHazardsUseCase(hazardEventRepository);
+
 const syncNoahDatasetUseCase = new SyncNoahDatasetUseCase(
   new HuggingFaceNoahDatasetSource(httpClient, NOAH_DATASET_API_URL),
   recordRevisionUseCase,
@@ -104,4 +108,14 @@ export const noahHuggingFaceWebhook = registerNoahWebhook({
 export const syncNoahGisDataset = registerNoahDailySync({
   syncUseCase: syncNoahDatasetUseCase,
   logger: noahLogger,
+});
+
+/**
+ * The app's read path. Separate from every ingestion entrypoint above: those
+ * are scheduled writers, this is the only function a phone ever calls.
+ */
+export const hazardsApi = registerHazardsApi({
+  queryHazards: queryHazardsUseCase,
+  readManifest: () => gisManifestRepository.findCurrent(),
+  logger: new ConsoleLogger("API"),
 });

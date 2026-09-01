@@ -6,6 +6,10 @@ import { Notifier, PushNotification } from "../../domain/ports/notifier";
 import { RecordGisDatasetRevisionUseCase } from "./record-gis-dataset-revision.use-case";
 
 class InMemoryManifestRepository implements GisManifestRepository {
+  async findCurrent() {
+    return null;
+  }
+
   saved: GisManifest | null = null;
   constructor(private currentSha: string | null = null) {}
   async saveIfCommitChanged(manifest: GisManifest): Promise<boolean> {

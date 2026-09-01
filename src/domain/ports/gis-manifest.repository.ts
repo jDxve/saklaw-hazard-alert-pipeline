@@ -16,4 +16,7 @@ export interface GisManifestRepository {
    * conclude "new revision" and broadcast a duplicate OTA update.
    */
   saveIfCommitChanged(manifest: GisManifest): Promise<boolean>;
+
+  /** The manifest as last recorded, or null before the first sync has run. */
+  findCurrent(): Promise<GisManifest | null>;
 }

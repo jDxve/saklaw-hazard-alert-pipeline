@@ -4,8 +4,8 @@ The backend for **Saklaw**, an app that tells you if there's a hazard near you
 in the Philippines — earthquakes, typhoons, floods.
 
 It checks government websites on a schedule, saves what it finds to Firestore,
-and pushes a notification when something actually matters. No UI, no API. Just
-the thing quietly running in the background.
+and pushes a notification when something actually matters. It also serves the
+app a read-only HTTP API over what it has collected. No UI.
 
 ## What it watches
 
@@ -25,11 +25,39 @@ PHIVOLCS sends an ETag, so unchanged polls come back as an empty 304 instead of
 re-downloading a 3.8 MB page. PAGASA sends no validator, so those always fetch
 in full.
 
+## The read API
+
+`hazardsApi`, region `asia-southeast1`. Read-only — it shares the Firestore
+repository with the writers but only ever calls its query methods.
+
+```
+GET /api/v1/hazards?lat=&lon=&radiusKm=&type=&since=&limit=&activeOnly=
+GET /api/v1/hazards/{id}
+GET /api/v1/layers/manifest
+```
+
+`lat` and `lon` must arrive together; half a point would silently widen a
+location query into a nationwide one. Types are the `HazardType` union, comma
+joined. `activeOnly` defaults to true.
+
+**What "active" means.** A cyclone bulletin carries PAGASA's own
+`valid for broadcast until ...`, and that is what expires it — the response
+says `lifecycleBasis: "source"`. Nothing else publishes an expiry, so those age
+out on a per-type rule in `domain/rules/hazard-lifecycle.rules.ts` and report
+`lifecycleBasis: "pipeline"`. The distinction is in the payload because the app
+must not present our guess as the agency's word.
+
+**What `locationMatch` means.** `point` is a real coordinate inside the radius.
+`approximateArea` is one of the interim basin circles in
+`config/basin-geography.ts` — our approximation, not a PAGASA boundary.
+`unscoped` means the source named places only in prose, as TCWS areas always
+are, so the hazard could not be ruled out and is returned rather than hidden.
+
 ## Running it
 
 ```bash
 npm install
-npm test        # 106 tests, all offline
+npm test        # 137 tests, all offline
 npm run build
 ```
 
@@ -78,11 +106,36 @@ produces them. The data is all there whenever you want it:
 Alert levels barely move, so notify on a *change* in level rather than on every
 poll — same trick as the cyclone IDs, put the level in the event ID.
 
-**Firestore rules.** There's no `firestore.rules` or `firestore.indexes.json` in
-here, so whether the app can read `hazard_events` depends on a console setting
-nobody has written down. Worth fixing before the app tries to read anything.
+**Flood severity.** Still flat `advisory`. PAGASA's four classes live only
+inside the per-basin PDFs, and those are not safely parseable: `pampanga.pdf`
+is 950 KB over two pages with 378 text-showing operators and *zero* extractable
+plaintext — subset fonts with custom encodings, so it needs a real PDF library
+with ToUnicode handling. Until that is funded, grading beyond `advisory` would
+be inventing a severity the source never gave us.
+
+**Basin geometry is ours, not PAGASA's.** `config/basin-geography.ts` holds
+hand-placed centres and generous radii for the 22 basins. They exist so the API
+can answer "might this reach my pin?" instead of returning every national flood
+event to everyone. They are not hazard boundaries and are never presented as
+such — every basin match returns
+`locationMatch: { type: "area", accuracy: "approximate" }`.
+
+Real polygons were investigated and rejected — the reasoning, the source
+comparison and the city-by-city test are in
+[`docs/basin-geometry-investigation.md`](docs/basin-geometry-investigation.md).
+The short version: the official boundaries are behind a Geoportal login,
+HydroBASINS has no names, and the open named catchment set excludes river
+mouths and deltas, which would silence flood alerts for Aparri, Cotabato City,
+Davao City, San Fernando and Malolos. Getting this right needs the DENR-RBCO
+boundaries or PAGASA's own FFWS service areas.
 
 ## Notes to future me
+
+**Firestore is closed to clients.** `firestore.rules` denies everything. The
+app never touches Firestore — it reads over HTTPS from `hazardsApi`, which uses
+the Admin SDK and bypasses rules, as the ingestion functions do. Denying by
+default is what makes the read API the only door. `firestore.indexes.json`
+carries the composite index `findRecent` needs (`type` + `issuedAt desc`).
 
 **PHIVOLCS and PAGASA have no APIs.** That's why this scrapes HTML. If you ever
 find a real API, delete half this repo happily.

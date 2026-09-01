@@ -16,6 +16,16 @@ class FakeQuakeSource implements QuakeSource {
 }
 
 class InMemoryHazardEventRepository implements HazardEventRepository {
+  // The read side is exercised by the query use case's own tests; ingestion
+  // tests only ever write.
+  async findRecent(): Promise<HazardEvent[]> {
+    return [...this.saved];
+  }
+
+  async findById(id: string): Promise<HazardEvent | null> {
+    return this.saved.find((event) => event.id === id) ?? null;
+  }
+
   readonly saved: HazardEvent[] = [];
   constructor(private readonly existingIds: Set<string> = new Set()) {}
   async saveIfAbsent(event: HazardEvent): Promise<boolean> {

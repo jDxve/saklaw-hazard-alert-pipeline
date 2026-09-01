@@ -76,6 +76,11 @@ export class IngestPhivolcsQuakesUseCase {
       type: "quake",
       severity: quakeSeverity(observation.magnitude),
       sourceType: "official",
+      // A quake is instantaneous: it has no validity window to publish, and
+      // the API ages it out by recency rather than by an invented expiry.
+      validUntil: null,
+      location: { lat: observation.lat, lon: observation.lon },
+      affectedAreas: [],
       title: `M${observation.magnitude.toFixed(1)} Earthquake — ${observation.location}`,
       plainSummary: `Depth: ${observation.depthKm} km. Verified seismic report from DOST-PHIVOLCS.`,
       issuedAt: observation.occurredAt,

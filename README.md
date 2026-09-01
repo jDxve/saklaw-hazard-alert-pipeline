@@ -92,22 +92,24 @@ go if deploys should need an approval:
 | Kind | Name | Value |
 |---|---|---|
 | Variable | `FIREBASE_PROJECT_ID` | the Firebase project id |
-| Secret | `FIREBASE_SERVICE_ACCOUNT` | a service-account JSON key with Firebase Admin and Cloud Functions Developer |
-| — | — | — |
+| Secret | `FIREBASE_SERVICE_ACCOUNT` | service-account JSON key — roles below |
+| Secret | `NOAH_WEBHOOK_SECRET` | any strong random string, used to seed Secret Manager on the first deploy |
 
-The workflow fails with a named error rather than a stack trace if either is
-missing.
+The service account needs **Firebase Admin**, **Cloud Functions Developer**,
+**Service Account User**, and **Secret Manager Admin**. The last one is not
+optional: `NOAH_WEBHOOK_SECRET` is declared with `defineSecret`, which makes it
+a *deploy-time* requirement — firebase refuses to deploy a function that
+references a secret Secret Manager does not have, and `--non-interactive`
+cannot stop to ask. The workflow therefore seeds it from the GitHub secret when
+the project has none, and leaves any existing value alone: rotating a secret is
+a deliberate act, not a side effect of deploying.
 
-One secret is **not** a GitHub secret. The Hugging Face webhook reads
-`NOAH_WEBHOOK_SECRET` through `defineSecret`, which is a Firebase-managed
-secret and has to be set against the project directly:
+Every one of these fails the run with a named error rather than a stack trace
+when it is missing.
 
-```bash
-firebase functions:secrets:set NOAH_WEBHOOK_SECRET
-```
-
-Without it `noahHuggingFaceWebhook` deploys and then rejects every delivery
-with a 401.
+Deploying needs the project on the **Blaze** plan. Functions v2, Cloud
+Scheduler and outbound calls to PAGASA and PHIVOLCS all require it — on Spark
+the scrapers cannot reach the internet at all.
 
 ## How it works
 

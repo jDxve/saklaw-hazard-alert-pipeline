@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned rather than floating on latest: which CLI shipped a release should
+  # be a commit that changes this line, not the Tuesday it was run on.
+  FIREBASE_TOOLS_VERSION: "15.28.2"
+
 # One deploy at a time, and never cancelled halfway: interrupting an upload
 # leaves half the functions on the new revision and half on the old.
 concurrency:
@@ -86,6 +91,34 @@ jobs:
             everything) echo "ONLY=functions,firestore:rules,firestore:indexes" >> "$GITHUB_ENV" ;;
           esac
 
+      # `defineSecret` makes NOAH_WEBHOOK_SECRET a deploy-time requirement, not
+      # a runtime one: firebase refuses to deploy a function referencing a
+      # secret that does not exist, and --non-interactive cannot stop to ask.
+      # So a first deploy from CI would fail here rather than at the webhook.
+      #
+      # Seeded from a GitHub secret only when Secret Manager has nothing. An
+      # existing value is never overwritten — rotating is a deliberate act
+      # (`firebase functions:secrets:set`), not a side effect of deploying.
+      - name: Ensure the webhook secret exists
+        if: inputs.target != 'firestore'
+        env:
+          PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          WEBHOOK_SECRET: ${{ secrets.NOAH_WEBHOOK_SECRET }}
+        run: |
+          cli="firebase-tools@$FIREBASE_TOOLS_VERSION"
+          if npx --yes "$cli" functions:secrets:access NOAH_WEBHOOK_SECRET \
+               --project "$PROJECT_ID" >/dev/null 2>&1; then
+            echo "NOAH_WEBHOOK_SECRET is already set; leaving it alone."
+            exit 0
+          fi
+          if [ -z "$WEBHOOK_SECRET" ]; then
+            echo "::error::NOAH_WEBHOOK_SECRET is missing from Secret Manager, and no GitHub secret of that name was given to seed it. Deploying functions would fail."
+            exit 1
+          fi
+          printf '%s' "$WEBHOOK_SECRET" \
+            | npx --yes "$cli" functions:secrets:set NOAH_WEBHOOK_SECRET \
+                --project "$PROJECT_ID" --data-file -
+
       - name: Deploy
         env:
           PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
@@ -94,7 +127,7 @@ jobs:
             echo "::error::FIREBASE_PROJECT_ID variable is not set on the production environment."
             exit 1
           fi
-          npx --yes firebase-tools@latest deploy \
+          npx --yes "firebase-tools@$FIREBASE_TOOLS_VERSION" deploy \
             --project "$PROJECT_ID" \
             --only "$ONLY" \
             --non-interactive \

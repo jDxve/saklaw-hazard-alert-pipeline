@@ -1,0 +1,107 @@
+# Deploying is a decision, not a consequence of merging.
+#
+# A deploy here starts scheduled scrapers hitting PAGASA and PHIVOLCS every two
+# to five minutes and puts a live FCM publisher in front of four real topics.
+# Nothing about that should happen because someone merged a README change, so
+# this runs only when a person asks it to.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to deploy
+        required: true
+        default: functions
+        type: choice
+        options:
+          - functions
+          - firestore
+          - everything
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancelled halfway: interrupting an upload
+# leaves half the functions on the new revision and half on the old.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy to Firebase
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Gate approvals, required reviewers and the secrets live on this
+    # environment, so who may deploy is a repository setting rather than
+    # something this file decides.
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The same gates CI runs. A deploy that skips them is a deploy that can
+      # ship a parser we already know is broken.
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Written to a file rather than passed inline: firebase-tools reads the
+      # credential from a path, and a secret on the command line lands in the
+      # process list.
+      - name: Authenticate
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SERVICE_ACCOUNT" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT is not set on the production environment."
+            exit 1
+          fi
+          printf '%s' "$SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/service-account.json" >> "$GITHUB_ENV"
+
+      - name: Resolve deploy target
+        run: |
+          case "${{ inputs.target }}" in
+            functions)  echo "ONLY=functions" >> "$GITHUB_ENV" ;;
+            firestore)  echo "ONLY=firestore:rules,firestore:indexes" >> "$GITHUB_ENV" ;;
+            everything) echo "ONLY=functions,firestore:rules,firestore:indexes" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Deploy
+        env:
+          PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: |
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::FIREBASE_PROJECT_ID variable is not set on the production environment."
+            exit 1
+          fi
+          npx --yes firebase-tools@latest deploy \
+            --project "$PROJECT_ID" \
+            --only "$ONLY" \
+            --non-interactive \
+            --force
+
+      # The credential is short-lived on a throwaway runner, but leaving it on
+      # disk for later steps to trip over is a habit worth not having.
+      - name: Revoke credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"

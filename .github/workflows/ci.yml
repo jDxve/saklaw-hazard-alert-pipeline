@@ -1,0 +1,58 @@
+# Every check that has to pass before this can be deployed. The steps and their
+# order are the ones in tool/preflight.sh, so a branch that passes locally
+# passes here — if the two disagree, that is a bug in one of the files.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # So a run can be started by hand against any branch.
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pinned to the runtime the functions are deployed on, so a green build
+      # here means the same compiler and standard library that will run in
+      # production. package.json asks for >=20; Cloud Functions runs nodejs20.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `ci` rather than `install`: it installs exactly the lockfile and fails
+      # if package.json has drifted from it, which is what a build should do.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The suite is entirely offline — PAGASA and PHIVOLCS pages are checked-in
+      # fixtures — so CI never depends on a government site being up.
+      - name: Test
+        run: npm test
+
+      # Last, because the deploy runs this same build and a compile error here
+      # is a deploy that would have failed halfway through uploading.
+      - name: Build
+        run: npm run build

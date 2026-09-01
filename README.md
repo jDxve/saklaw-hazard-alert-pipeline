@@ -61,7 +61,53 @@ npm test        # 137 tests, all offline
 npm run build
 ```
 
-Also `npm run lint` and `npm run typecheck`.
+Also `npm run lint` and `npm run typecheck`. `tool/preflight.sh` runs all four
+in the order CI runs them, which is the thing to run before handing work over.
+
+Locally, against the emulators:
+
+```bash
+npm i -g firebase-tools
+firebase login
+firebase use --add                              # writes .firebaserc
+firebase emulators:start --only functions,firestore
+```
+
+## Deploying
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, test and build on every
+push and PR to `main`. It does not deploy.
+
+Deploying is a separate, manually triggered workflow — Actions → Deploy → Run
+workflow — because a deploy starts scrapers polling PAGASA and PHIVOLCS every
+two to five minutes and puts a live FCM publisher in front of four real topics.
+That should follow from someone deciding to ship, not from a merge. It re-runs
+every CI gate first, then deploys functions, Firestore rules and indexes, or
+both.
+
+It needs three things set once, on a repository environment named
+`production` (Settings → Environments), which is also where required reviewers
+go if deploys should need an approval:
+
+| Kind | Name | Value |
+|---|---|---|
+| Variable | `FIREBASE_PROJECT_ID` | the Firebase project id |
+| Secret | `FIREBASE_SERVICE_ACCOUNT` | a service-account JSON key with Firebase Admin and Cloud Functions Developer |
+| — | — | — |
+
+The workflow fails with a named error rather than a stack trace if either is
+missing.
+
+One secret is **not** a GitHub secret. The Hugging Face webhook reads
+`NOAH_WEBHOOK_SECRET` through `defineSecret`, which is a Firebase-managed
+secret and has to be set against the project directly:
+
+```bash
+firebase functions:secrets:set NOAH_WEBHOOK_SECRET
+```
+
+Without it `noahHuggingFaceWebhook` deploys and then rejects every delivery
+with a 401.
 
 ## How it works
 

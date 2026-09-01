@@ -23,8 +23,22 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
     groups:
+      # eslint and @eslint/js are one release, published as two packages:
+      # @eslint/js@10 peers on eslint@^10, so bumping either alone leaves
+      # `npm ci` unable to resolve. Grouped across every update type,
+      # majors included, so they can only ever move together. The
+      # typescript-eslint packages ride the same eslint major.
+      eslint:
+        patterns:
+          - eslint
+          - "@eslint/*"
+          - typescript-eslint
+          - "@typescript-eslint/*"
+        update-types: [major, minor, patch]
+
       # Patches and minors together: individually they are noise, and CI is
-      # what decides whether they are safe.
+      # what decides whether they are safe. Listed after the group above,
+      # because a package joins the first group it matches.
       safe-updates:
         update-types: [minor, patch]
     ignore:

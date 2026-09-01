@@ -99,11 +99,24 @@ export function phCivilTimeToIso(
   return new Date(civilMs - PH_UTC_OFFSET_MINUTES * 60_000).toISOString();
 }
 
+/**
+ * The element type cheerio hands back for a selector.
+ *
+ * Derived from cheerio's own API rather than named directly: cheerio 1.x
+ * dropped the `cheerio.Element` alias that `@types/cheerio` used to supply,
+ * and the real type lives in `domhandler` — a transitive package this has no
+ * business depending on by name.
+ */
+type CheerioElement =
+  ReturnType<ReturnType<typeof cheerio.load>> extends cheerio.Cheerio<infer E>
+    ? E
+    : never;
+
 const QUAKE_COLUMN_COUNT = 6;
 
 export function parseQuakeRow(
   $: ReturnType<typeof cheerio.load>,
-  row: cheerio.Element,
+  row: CheerioElement,
 ): ParsedQuakeRow | null {
   const cols = $(row).find("td");
   if (cols.length < QUAKE_COLUMN_COUNT) return null;

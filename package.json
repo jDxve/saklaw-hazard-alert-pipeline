@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
-    "@types/cheerio": "^0.22.35",
+    "@types/cheerio": "^1.0.0",
     "@types/node": "^22.20.1",
     "eslint": "^9.9.0",
     "jiti": "^2.7.0",

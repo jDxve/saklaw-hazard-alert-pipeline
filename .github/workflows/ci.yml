@@ -30,10 +30,11 @@ jobs:
 
       # Pinned to the runtime the functions are deployed on, so a green build
       # here means the same compiler and standard library that will run in
-      # production. package.json asks for >=20; Cloud Functions runs nodejs20.
+      # production. Cloud Functions runs nodejs22; Google decommissions the
+      # nodejs20 runtime on 2026-10-30.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # `ci` rather than `install`: it installs exactly the lockfile and fails

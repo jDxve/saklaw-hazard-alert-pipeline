@@ -30,6 +30,11 @@ import { registerScheduledCycloneSync } from "./presentation/functions/scheduled
 import { registerScheduledFloodSync } from "./presentation/functions/scheduled-flood-sync.function";
 import { registerScheduledQuakeSync } from "./presentation/functions/scheduled-quake-sync.function";
 
+// One instance is load-bearing for the scrapers, not a cost setting: two
+// concurrent runs of the same sync would both pass `saveIfAbsent` on
+// different documents and double-notify. The read API opts out of it below —
+// it has no such constraint, and serialising it would stall the app in the
+// one situation it exists for.
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 1 });
 
 // --- Composition root: wire infrastructure adapters into application use cases. ---

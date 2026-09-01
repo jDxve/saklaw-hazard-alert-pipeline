@@ -26,6 +26,9 @@ env:
   # Pinned rather than floating on latest: which CLI shipped a release should
   # be a commit that changes this line, not the Tuesday it was run on.
   FIREBASE_TOOLS_VERSION: "15.28.2"
+  # The functions' region, and the suffix Firebase puts on the Cloud Scheduler
+  # job it creates for each scheduled function.
+  FUNCTIONS_REGION: asia-southeast1
 
 # One deploy at a time, and never cancelled halfway: interrupting an upload
 # leaves half the functions on the new revision and half on the old.
@@ -132,6 +135,57 @@ jobs:
             --only "$ONLY" \
             --non-interactive \
             --force
+
+      # gcloud is not on the runner, and the scheduler jobs are not something
+      # firebase-tools can trigger. Same credential as the deploy rather than a
+      # second one to rotate; this runs after the deploy so it cannot disturb
+      # the GOOGLE_APPLICATION_CREDENTIALS the firebase steps rely on.
+      - name: Authenticate to Google Cloud
+        if: inputs.target != 'firestore'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        if: inputs.target != 'firestore'
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Cloud Scheduler counts from when the job was created, so a freshly
+      # deployed function waits for its next tick before it has ever run.
+      # syncNoahGisDataset is on `0 2 * * *`: deploy at three in the afternoon
+      # and nothing proves it works until two the following morning.
+      #
+      # Running each once turns a deploy into a smoke test. It is not a
+      # meaningful increase in load on the sources: three of these four poll
+      # every two to five minutes anyway, so the deploy was never inert — only
+      # the daily NOAH check actually changes, and that is the one that most
+      # needed proving.
+      - name: Smoke-test the scheduled jobs
+        if: inputs.target != 'firestore'
+        env:
+          PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: |
+          failed=0
+          for fn in \
+            syncPhivolcsQuakes \
+            syncPagasaCyclone \
+            syncPagasaFlood \
+            syncNoahGisDataset
+          do
+            job="firebase-schedule-$fn-$FUNCTIONS_REGION"
+            echo "--- $job"
+            # A scraper erroring is a different signal from a deploy failing,
+            # and the deploy has already succeeded by this point. Each failure
+            # becomes an annotation; none of them fails the run.
+            if ! gcloud scheduler jobs run "$job" \
+                   --location "$FUNCTIONS_REGION" \
+                   --project "$PROJECT_ID" 2>&1
+            then
+              echo "::warning title=Scheduled job did not run::$job could not be triggered. The deploy succeeded; check the function's logs."
+              failed=$((failed + 1))
+            fi
+          done
+          echo "Triggered 4 jobs, $failed could not be started."
 
       # The credential is short-lived on a throwaway runner, but leaving it on
       # disk for later steps to trip over is a habit worth not having.

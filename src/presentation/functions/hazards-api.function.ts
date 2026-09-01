@@ -27,7 +27,20 @@ export function registerHazardsApi(deps: HazardsApiDeps) {
   const now = deps.now ?? (() => new Date());
 
   return onRequest(
-    { region: "asia-southeast1", timeoutSeconds: 30, memory: "256MiB", cors: true },
+    {
+      region: "asia-southeast1",
+      timeoutSeconds: 30,
+      memory: "256MiB",
+      cors: true,
+      // Overrides the global cap of 1, which every scheduled sync needs and
+      // this does not. Left at 1, every phone opening the app would queue
+      // behind every other phone on a 30-second timeout — and the moment that
+      // happens is an earthquake or a landfall, when they all open it at once.
+      maxInstances: 10,
+      // Nothing kept warm: a cold start on a JSON read is cheap, and paying
+      // for an idle instance around the clock is not.
+      minInstances: 0,
+    },
     async (req, res) => {
       if (req.method !== "GET") {
         res.set("Allow", "GET");

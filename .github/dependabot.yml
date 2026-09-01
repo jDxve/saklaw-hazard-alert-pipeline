@@ -1,0 +1,42 @@
+# Pinning actions to commit SHAs stops a tag being repointed under a workflow
+# that holds deploy credentials. The cost is that a pin never picks up a fix on
+# its own, so something has to watch them — that is this file. Dependabot reads
+# the `# v2.1.13` comment beside each SHA, so its pull requests say which
+# version is moving rather than showing two opaque hashes.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      # Patches and minors together: individually they are noise, and CI is
+      # what decides whether they are safe.
+      safe-updates:
+        update-types: [minor, patch]
+    ignore:
+      # Majors land by hand. firebase-functions and firebase-admin decide what
+      # runs in production, and admin 14 already needed a source change when it
+      # dropped the `admin.firestore()` namespace.
+      - dependency-name: firebase-functions
+        update-types: [version-update:semver-major]
+      - dependency-name: firebase-admin
+        update-types: [version-update:semver-major]
+      # Tracks the Cloud Functions runtime, not npm. Bumping it past the
+      # deployed nodejs22 would typecheck against a standard library that is
+      # not there.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]

@@ -42,16 +42,25 @@ export function registerHazardsApi(deps: HazardsApiDeps) {
       minInstances: 0,
     },
     async (req, res) => {
-      if (req.method !== "GET") {
-        res.set("Allow", "GET");
+      // HEAD is a GET without the body. Refusing it is wrong on its own terms
+      // and matters more with a CDN in front, which uses it to revalidate.
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.set("Allow", "GET, HEAD");
         res.status(405).json({ error: "Method Not Allowed" });
         return;
       }
 
-      // Hazard readings change on a 2-5 minute ingestion cadence; a minute of
-      // shared caching absorbs a launch spike without letting a warning go
-      // stale in front of a reader.
-      res.set("Cache-Control", "public, max-age=60");
+      // Hazard readings change on a 2-5 minute ingestion cadence, so a minute
+      // of caching absorbs a launch spike without letting a warning go stale
+      // in front of a reader.
+      //
+      // `s-maxage` is what the Firebase Hosting CDN reads, and it is the one
+      // that matters: without a shared cache every app open is its own
+      // Firestore query, and the reads are the scarce thing here rather than
+      // the compute. The shorter `max-age` keeps a phone's own copy tighter
+      // than the edge's, so a reader never sits on a minute-old warning that
+      // the edge has already refreshed.
+      res.set("Cache-Control", "public, max-age=30, s-maxage=60");
 
       const path = (req.path || "/").replace(/\/+$/, "") || "/";
 

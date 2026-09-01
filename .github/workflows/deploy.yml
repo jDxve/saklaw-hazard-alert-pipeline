@@ -16,6 +16,7 @@ on:
         type: choice
         options:
           - functions
+          - hosting
           - firestore
           - everything
 
@@ -90,8 +91,9 @@ jobs:
         run: |
           case "${{ inputs.target }}" in
             functions)  echo "ONLY=functions" >> "$GITHUB_ENV" ;;
+            hosting)    echo "ONLY=hosting" >> "$GITHUB_ENV" ;;
             firestore)  echo "ONLY=firestore:rules,firestore:indexes" >> "$GITHUB_ENV" ;;
-            everything) echo "ONLY=functions,firestore:rules,firestore:indexes" >> "$GITHUB_ENV" ;;
+            everything) echo "ONLY=functions,hosting,firestore:rules,firestore:indexes" >> "$GITHUB_ENV" ;;
           esac
 
       # `defineSecret` makes NOAH_WEBHOOK_SECRET a deploy-time requirement, not
@@ -103,7 +105,7 @@ jobs:
       # existing value is never overwritten — rotating is a deliberate act
       # (`firebase functions:secrets:set`), not a side effect of deploying.
       - name: Ensure the webhook secret exists
-        if: inputs.target != 'firestore'
+        if: inputs.target == 'functions' || inputs.target == 'everything'
         env:
           PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           WEBHOOK_SECRET: ${{ secrets.NOAH_WEBHOOK_SECRET }}
@@ -141,13 +143,13 @@ jobs:
       # second one to rotate; this runs after the deploy so it cannot disturb
       # the GOOGLE_APPLICATION_CREDENTIALS the firebase steps rely on.
       - name: Authenticate to Google Cloud
-        if: inputs.target != 'firestore'
+        if: inputs.target == 'functions' || inputs.target == 'everything'
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        if: inputs.target != 'firestore'
+        if: inputs.target == 'functions' || inputs.target == 'everything'
         uses: google-github-actions/setup-gcloud@v2
 
       # Cloud Scheduler counts from when the job was created, so a freshly
@@ -161,7 +163,7 @@ jobs:
       # the daily NOAH check actually changes, and that is the one that most
       # needed proving.
       - name: Smoke-test the scheduled jobs
-        if: inputs.target != 'firestore'
+        if: inputs.target == 'functions' || inputs.target == 'everything'
         env:
           PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
         run: |

@@ -40,6 +40,20 @@ GET /api/v1/layers/manifest
 location query into a nationwide one. Types are the `HazardType` union, comma
 joined. `activeOnly` defaults to true.
 
+**Call it through Hosting, not the function URL.** Firebase Hosting rewrites
+`/api/**` to `hazardsApi`, which puts a CDN in front of it:
+
+```
+https://<project>.web.app/api/v1/hazards        <- use this
+https://asia-southeast1-<project>.cloudfunctions.net/hazardsApi/api/v1/hazards
+```
+
+The reads are the scarce resource here, not the compute. Every uncached
+request is its own Firestore query, so without a shared cache a launch spike
+is one query per phone. The function sends `s-maxage=60`, which the CDN reads,
+collapsing a minute of app opens into a single query; the shorter `max-age=30`
+keeps a phone's own copy tighter than the edge's.
+
 **What "active" means.** A cyclone bulletin carries PAGASA's own
 `valid for broadcast until ...`, and that is what expires it — the response
 says `lifecycleBasis: "source"`. Nothing else publishes an expiry, so those age

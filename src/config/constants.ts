@@ -95,12 +95,71 @@ export const PAGASA_NO_CYCLONE_PHRASE =
 export const PAGASA_CYCLONE_SCOPE_SELECTOR =
   ".tropical-cyclone-weather-bulletin-page .article-content" as const;
 
+/**
+ * The bulletin's own structure, verified against the live page.
+ *
+ * The storm's name is printed once, in the heading, as `Tropical Depression
+ * "Pilandok"`. Reading it from there rather than from the body is not a
+ * refinement — the body contains sentences like "PILANDOK is forecast to
+ * intensify into a tropical storm within the next 12 hours", and a regex over
+ * the body matched that and published a storm called "TROPICAL STORM WITHIN".
+ */
+export const PAGASA_CYCLONE_HEADING_SELECTOR = "h3" as const;
+
+/** "Issued at ..." and "(Valid for broadcast until ...)", in that order. */
+export const PAGASA_CYCLONE_META_SELECTOR = "h5" as const;
+
+/** Each fact of the bulletin sits in its own titled panel. */
+export const PAGASA_PANEL_SELECTOR = ".panel" as const;
+export const PAGASA_PANEL_HEADING_SELECTOR = ".panel-heading" as const;
+
+/** Panel headings, matched case-insensitively on their leading words. */
+export const PAGASA_PANEL_CENTER = "Location of Eye" as const;
+export const PAGASA_PANEL_MOVEMENT = "Movement" as const;
+export const PAGASA_PANEL_STRENGTH = "Strength" as const;
+export const PAGASA_PANEL_FORECAST = "Forecast Position" as const;
+export const PAGASA_PANEL_WIND_SIGNAL = "Wind Signal" as const;
+
+/**
+ * PAGASA's explicit stand-down for wind signals. This is a different statement
+ * from "no cyclone": a depression can be active in PAR with no signal hoisted.
+ */
+export const PAGASA_NO_WIND_SIGNAL_PHRASE = "No Tropical Cyclone Wind Signal" as const;
+
+/**
+ * The wind-signal table repeats `<thead><th class="signalno5">` then that
+ * level's `<tbody>`, descending to signalno1. The level is carried in the
+ * class, so it is read rather than inferred from wind speeds or row order.
+ */
+export const PAGASA_SIGNAL_CLASS_PREFIX = "signalno" as const;
+
+/** Label in the first cell of the row carrying that signal's area list. */
+export const PAGASA_AFFECTED_AREAS_LABEL = "Affected Areas" as const;
+
+/** Island groups the area lists are grouped under. */
+export const PH_ISLAND_GROUPS = ["Luzon", "Visayas", "Mindanao"] as const;
+
 /** Rows of the "18 MAJOR RIVER BASINS" status table on the flood page. */
 export const PAGASA_BASIN_ROW_SELECTOR = ".basin-hydro-forecast table tbody tr" as const;
 
 /** Class PAGASA puts on a basin's status link when that basin is under flood watch. */
 export const PAGASA_FLOOD_WATCH_CLASS     = "flood"     as const;
 export const PAGASA_NON_FLOOD_WATCH_CLASS = "non-flood" as const;
+
+/**
+ * Bounds of the TCWS scale. These are validity limits, not defaults — "no
+ * signal hoisted" is represented as null, never as [MIN_TCWS_SIGNAL].
+ */
+/**
+ * How long a flood watch reading stays current.
+ *
+ * PAGASA publishes no expiry on the basin status table — only a live state —
+ * so unlike a cyclone bulletin there is no source validity to read. The flood
+ * sync runs every 5 minutes and renews the watch each time, so a reading that
+ * has not been renewed for three windows is stale rather than active. This is
+ * the pipeline's rule, and the API labels it as such.
+ */
+export const FLOOD_WATCH_VALID_FOR_MS = 15 * 60 * 1000;
 
 export const MIN_TCWS_SIGNAL = 1;
 export const MAX_TCWS_SIGNAL = 5;

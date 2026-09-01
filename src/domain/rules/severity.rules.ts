@@ -7,7 +7,14 @@ export function quakeSeverity(magnitude: number): SeverityLevel {
   return "info";
 }
 
-export function cycloneSeverity(maxSignal: number): SeverityLevel {
+/**
+ * A cyclone with no wind signal hoisted is still worth knowing about — it is in
+ * PAR and PAGASA is bulletining it — but it is not a warning about wind, so it
+ * grades as information rather than being pushed up to the lowest signal's
+ * severity. Null is the source saying "no signal", not a missing reading.
+ */
+export function cycloneSeverity(maxSignal: number | null): SeverityLevel {
+  if (maxSignal === null) return "info";
   if (maxSignal >= 3) return "critical";
   if (maxSignal >= 2) return "warning";
   return "advisory";

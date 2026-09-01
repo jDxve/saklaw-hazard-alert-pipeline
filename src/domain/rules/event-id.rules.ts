@@ -26,8 +26,10 @@ export function hourBucket(isoTimestamp: string): string {
  * never be pushed — silencing the alert that matters most. Keying on the signal
  * as well makes each distinct severity within the hour its own event.
  */
-export function cycloneEventId(issuedAt: string, maxSignal: number): string {
-  return `pagasa_tc_${hourBucket(issuedAt)}_s${maxSignal}`;
+export function cycloneEventId(issuedAt: string, maxSignal: number | null): string {
+  // "none" rather than 0: a bulletin with no signal hoisted is its own state,
+  // and must not collide with a future Signal #0 or read as one.
+  return `pagasa_tc_${hourBucket(issuedAt)}_s${maxSignal ?? "none"}`;
 }
 
 /**

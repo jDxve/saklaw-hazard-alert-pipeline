@@ -66,6 +66,24 @@ export function parsePhivolcsDate(rawStr: string): string | null {
     return null;
   }
 
+  return phCivilTimeToIso(year, month, day, hour, minute, second);
+}
+
+/**
+ * Converts a Philippine civil date-time into an ISO-8601 UTC string, or null
+ * when the components do not name a real calendar date.
+ *
+ * Shared with the PAGASA parser: both sources print local time with no zone
+ * marker, and both need the same refusal to invent one.
+ */
+export function phCivilTimeToIso(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second = 0,
+): string | null {
   // Date.UTC silently rolls impossible dates forward ("31 February" -> 3 March),
   // so round-trip the components to reject them instead of inventing a date.
   const civilMs = Date.UTC(year, month, day, hour, minute, second);
